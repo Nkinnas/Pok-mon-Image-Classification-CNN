@@ -14,8 +14,8 @@ A convolutional neural network that classifies images of first-generation Pokemo
 
 ## Usage
 
-1. **Run `make_splits.py`** — splits the dataset into train/val/test sets
+1. **Run `make_splits.py`** - splits the dataset into train/val/test sets
 
-2. **Run `train.py`** — trains the CNN model
+2. **Run `train.py`** - trains the CNN model
 
-3. **Run `predict.py`** — classifies a Pokemon image. Before running, place the image you want to classify inside the `Image_to_predict/` folder. Since this model is trained on first-generation Pokemon only, the image should be of one of the 151 original Pokemon.
+3. **Run `predict.py`** - classifies a Pokemon image. Before running, place the image you want to classify inside the `Image_to_predict/` folder. Since this model is trained on first-generation Pokemon only, the image should be of one of the 151 original Pokemon.
