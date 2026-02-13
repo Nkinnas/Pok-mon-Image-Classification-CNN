@@ -27,6 +27,12 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data (add back if you want to track datasets)
-# data/
-# Pokemon_images/
+# Ignore image contents but keep folder structure
+Pokemon_images/**
+!Pokemon_images/.gitkeep
+data/train/**
+!data/train/.gitkeep
+data/val/**
+!data/val/.gitkeep
+data/test/**
+!data/test/.gitkeep
