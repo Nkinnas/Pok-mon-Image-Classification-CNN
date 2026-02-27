@@ -1,0 +1,5 @@
+torch
+torchvision
+Pillow
+discord.py
+python-dotenv

@@ -1,4 +1,4 @@
-# scripts/predict.py
+
 import torch
 from torchvision import models, transforms
 from PIL import Image

@@ -1,4 +1,4 @@
-# train.py
+
 import json, time
 import warnings
 from tqdm import tqdm
@@ -6,7 +6,9 @@ warnings.filterwarnings("ignore", message="Palette images with Transparency")
 
 from pathlib import Path
 import torch, torch.nn as nn, torch.optim as optim
+from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
+from torch.amp import GradScaler, autocast
 from torchvision import datasets, transforms, models
 
 from PIL import Image, ImageFile
@@ -18,7 +20,7 @@ class ToRGB:
 
 
 
-def get_loaders(data_dir="data", img_size=224, batch_size=32, workers=4):
+def get_loaders(data_dir="data", img_size=224, batch_size=256, workers=8):
     train_tfms = transforms.Compose([
         ToRGB(),                          
         transforms.Resize((img_size, img_size)),
@@ -39,9 +41,9 @@ def get_loaders(data_dir="data", img_size=224, batch_size=32, workers=4):
     test_ds  = datasets.ImageFolder(Path(data_dir)/"test",  transform=eval_tfms)
 
     loaders = {
-        "train": DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=workers, pin_memory=True),
-        "val":   DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=True),
-        "test":  DataLoader(test_ds,  batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=True),
+        "train": DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=workers, pin_memory=True, persistent_workers=True),
+        "val":   DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=True, persistent_workers=True),
+        "test":  DataLoader(test_ds,  batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=True, persistent_workers=True),
     }
     idx_to_class = {v:k for k,v in train_ds.class_to_idx.items()}
     return loaders, idx_to_class
@@ -57,14 +59,15 @@ def evaluate(model, loader, device, criterion):
     tot, correct, loss_sum = 0, 0, 0.0
     with torch.no_grad():
         for x,y in loader:
-            x,y = x.to(device), y.to(device)
-            out = model(x)
+            x,y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            with autocast("cuda"):
+                out = model(x)
             loss_sum += criterion(out,y).item() * x.size(0)
             correct += (out.argmax(1)==y).sum().item()
             tot += y.size(0)
     return loss_sum/tot, correct/tot
 
-def main(data_dir="data", epochs=10, batch_size=32, lr=3e-4, wd=1e-4, img_size=224, save_dir="checkpoints"):
+def main(data_dir="data", epochs=30, batch_size=256, lr=3e-3, wd=1e-4, img_size=224, save_dir="checkpoints"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)
 
@@ -72,9 +75,14 @@ def main(data_dir="data", epochs=10, batch_size=32, lr=3e-4, wd=1e-4, img_size=2
     num_classes = len(idx_to_class)
     print("Classes:", num_classes)
 
+    torch.backends.cudnn.benchmark = True
+
     model = build_model(num_classes).to(device)
     opt = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+    scheduler = OneCycleLR(opt, max_lr=lr, epochs=epochs,
+                           steps_per_epoch=len(loaders["train"]))
     crit = nn.CrossEntropyLoss()
+    scaler = GradScaler("cuda")
 
     Path(save_dir).mkdir(parents=True, exist_ok=True)
     best_path = Path(save_dir)/"best.pt"
@@ -86,12 +94,15 @@ def main(data_dir="data", epochs=10, batch_size=32, lr=3e-4, wd=1e-4, img_size=2
         model.train()
         tot, correct, loss_sum = 0, 0, 0.0
         for x, y in tqdm(loaders["train"], desc=f"Epoch {ep:02d}", ncols=100):
-            x, y = x.to(device), y.to(device)
+            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             opt.zero_grad(set_to_none=True)
-            out = model(x)
-            loss = crit(out, y)
-            loss.backward()
-            opt.step()
+            with autocast("cuda"):
+                out = model(x)
+                loss = crit(out, y)
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+            scheduler.step()
             loss_sum += loss.item() * x.size(0)
             correct += (out.argmax(1) == y).sum().item()
             tot += y.size(0)
